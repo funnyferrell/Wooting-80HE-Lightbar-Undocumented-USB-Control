@@ -1,139 +1,98 @@
-# python-pulsar-mouse-tool
+# wooting-lightbar
 
-A Python toolkit for the **Pulsar X2 v2 Mini** wireless mouse, with a **Wooting 80HE lightbar** battery indicator.
-
-Supported hardware:
-- Mouse: Pulsar X2 v2 Mini — wired and 1 kHz wireless dongle (VID `0x3710` PID `0x5406`)
-- Keyboard: Wooting 80HE (PIDs `0x1400`–`0x1402`)
-
-Both protocols were reverse-engineered via USB packet captures (Wireshark / USBPcap). This repository is mainly a record of that work and a reference for projects like [libratbag](https://github.com/libratbag/libratbag).
+Control the **Wooting 80HE LED bar** programmatically from Python, without
+the Wooting RGB SDK and without conflicting with the Wootility Background
+Service.
 
 ---
 
-## Tools
+## Background
 
-### `mouse_battery_strip.py` — Battery → Lightbar bridge *(Windows)*
+The Wooting RGB SDK does not expose the 80HE lightbar.  As of firmware 2.13,
+Wooting's own changelog notes SDK lightbar support as a future feature.
 
-System tray app. Reads the Pulsar battery every 60 seconds and pushes the percentage to the Wooting 80HE lightbar Light Indicator, so the lightbar acts as a wireless mouse battery gauge.
+The Wootility Background Service can drive the lightbar with live system
+metrics (CPU %, RAM %, volume, etc.) via its "Light Indicator" feature.  This
+library uses the same undocumented USB command (`0x1f`) discovered by capturing
+USB traffic from the Background Service.
 
-Uses `hidapi` — no driver replacement needed for either device.
-
-**One-time setup in Wootility:**
-
-1. Lightbar → **Light Indicator** → add any data source (CPU works fine)
-2. Style the gradient to taste (green = full, red = low is natural for battery)
-3. Settings → **Background Service** → disable that data source so Wootility stops overwriting the value
-
-**Run:**
-
-```
-pythonw mouse_battery_strip.py
-```
-
-Using `pythonw` avoids a console window. A coloured circle appears in the system tray — green above 50%, orange above 20%, red below.
-
-**Tray menu:**
-- **Refresh now** — poll immediately
-- **Start with Windows** — toggle autostart via `HKCU\...\Run` (no admin needed)
-- **Quit**
-
-The poll interval is 60 seconds; change `POLL_INTERVAL` at the top of the script to adjust.
-
-See [WOOTING_LIGHTBAR.md](WOOTING_LIGHTBAR.md) for the full reverse-engineered USB protocol.
+Full protocol details are in [WOOTING_LIGHTBAR.md](WOOTING_LIGHTBAR.md).
 
 ---
 
-### `pulsar_battery.py` — Standalone battery reader *(Windows / Linux / macOS)*
+## Requirements
 
-Prints battery status. Uses `hidapi`, no driver replacement needed.
+- Python 3.10+
+- Wooting 80HE with Wootility installed
 
 ```
-$ python pulsar_battery.py
-Battery:  72%
-Voltage:  3980 mV
-Charging: False
+pip install hidapi
 ```
 
 ---
 
-### `pulsar.py` — Mouse settings CLI *(Windows / Linux)*
+## Wootility setup (one-time)
 
-Reads and writes on-device settings over USB via `pyusb`. An alternative to the official Pulsar Fusion software. Does not implement button remapping or macros.
+The keyboard renders values using a Light Indicator effect configured in
+Wootility.  The library controls the *value*; Wootility controls the *look*.
 
-**Linux setup:**
-
-```
-sudo cp 49-pulsar-mouse.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
-
-**Windows setup:**
-
-Place `libusb-1.0.dll` next to `pulsar.py` (download from [libusb.info](https://libusb.info)), or install libusb system-wide.
-
-**Usage:**
-
-```
-$ python pulsar.py --help
-usage: pulsar.py [-h] [--dpi DPI] [--dpi-mode DPI_MODE]
-                 [--led-brightness LED_BRIGHTNESS] [--led-color LED_COLOR]
-                 [--led-effect {off,steady,breathe}]
-                 [--motion-sync {on,off}] [--lod-ripple {on,off}]
-                 [--angle-snapping {on,off}]
-                 [--polling-rate {1000,500,250,125}]
-                 [--restore]
-```
-
-**Read current settings and battery:**
-
-```
-$ python pulsar.py
-{
-  "active_dpi_mode": 0,
-  "active_profile": 0,
-  "angle_snapping_enabled": false,
-  "autosleep_seconds": 60,
-  "debounce_milliseconds": 3,
-  "dpi_modes": [
-    { "dpi": 400,  "dpi_mode": 0, "led_color": "#2c2d2e" },
-    { "dpi": 800,  "dpi_mode": 1, "led_color": "#303132" },
-    { "dpi": 1600, "dpi_mode": 2, "led_color": "#343536" },
-    { "dpi": 3200, "dpi_mode": 3, "led_color": "#38393a" }
-  ],
-  "led": { "effect": null, "enabled": false },
-  "lod": { "mm": 1, "ripple_enabled": false },
-  "motion_sync_enabled": true,
-  "polling_rate_hz": 1000,
-  "power": {
-    "battery_millivolts": 3871,
-    "battery_percent": 50,
-    "connected": false
-  }
-}
-```
-
-**Change settings:**
-
-```bash
-python pulsar.py --dpi 800
-python pulsar.py --polling-rate 500
-python pulsar.py --led-effect breathe --led-color '#ff3300'
-python pulsar.py --motion-sync off
-python pulsar.py --restore          # factory defaults
-```
+1. In Wootility: **Lightbar → Light Indicator → add a data source**
+   (CPU, RAM, or Volume — the type doesn't matter, only its slot position)
+2. Style the effect however you like
+3. **Settings → Background Service → disable that data source**
+   so the Background Service stops overwriting the values you push
 
 ---
 
-## Installation
+## Usage
 
-```
-pip install hidapi pystray Pillow pyusb
+```python
+from wooting_lightbar import send_lightbar_value
+
+# Push a single value (0.0–100.0) to slot 0
+send_lightbar_value(75.0)
 ```
 
-`pystray` and `Pillow` are only needed for `mouse_battery_strip.py`. `pyusb` is only needed for `pulsar.py`.
+For multiple updates or multiple slots:
+
+```python
+from wooting_lightbar import Lightbar
+
+with Lightbar() as bar:
+    bar.send(cpu_pct, slot=0)
+    bar.send(ram_pct, slot=1)
+```
+
+See [example.py](example.py) for a runnable demo.
 
 ---
 
-## Protocol Documentation
+## API
 
-- [WOOTING_LIGHTBAR.md](WOOTING_LIGHTBAR.md) — Reverse-engineered USB protocol for the Wooting 80HE lightbar data source command (`0x1F`), including packet structure, slot indexing, and how the Wooting Background Service communicates with the firmware
+### `send_lightbar_value(value, slot=0)`
+
+Push a value to a lightbar data source slot.  Opens the HID device, writes
+one packet, closes immediately.
+
+| Parameter | Type  | Description |
+|-----------|-------|-------------|
+| `value`   | float | 0.0–100.0   |
+| `slot`    | int   | Data source slot index (0 = first source added in Wootility) |
+
+Raises `RuntimeError` if the keyboard is not found.
+
+### `Lightbar` (context manager)
+
+Keeps the HID device open across multiple `.send()` calls.  Prefer this
+when updating several slots at once or sending values frequently.
+
+### `find_wooting_path()`
+
+Returns the raw HID path of the config interface, or `None`.  Useful if
+you need direct device access.
+
+---
+
+## License
+
+MIT
